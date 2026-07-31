@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+const basePath = "/leet-track";
+
 export const metadata: Metadata = {
   title: {
     default: "题迹 · 力扣刷题记录",
@@ -8,7 +10,8 @@ export const metadata: Metadata = {
   },
   description: "记录每一道题，看见每一点进步。数据只保存在你的设备上。",
   applicationName: "题迹",
-  manifest: "/manifest.webmanifest",
+  metadataBase: new URL("https://zane-woo.github.io/leet-track/"),
+  manifest: `${basePath}/manifest.webmanifest`,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -16,10 +19,10 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: `${basePath}/icon-192.png`, sizes: "192x192", type: "image/png" },
+      { url: `${basePath}/icon-512.png`, sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+    apple: [{ url: `${basePath}/apple-touch-icon.png`, sizes: "180x180", type: "image/png" }],
   },
   formatDetection: {
     telephone: false,

@@ -43,6 +43,7 @@ interface BeforeInstallPromptEvent extends Event {
 const STORAGE_KEY = "leet-track-problems-v1";
 const GOAL_KEY = "leet-track-weekly-goal";
 const APPEARANCE_KEY = "leet-track-appearance";
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const DAY = 86_400_000;
 
 const difficultyMeta: Record<Difficulty, { className: string; mark: string }> = {
@@ -197,7 +198,9 @@ export function LeetTrackApp() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      navigator.serviceWorker
+        .register(`${BASE_PATH}/sw.js`, { scope: `${BASE_PATH}/` })
+        .catch(() => undefined);
     }
     const handleInstall = (event: Event) => {
       event.preventDefault();

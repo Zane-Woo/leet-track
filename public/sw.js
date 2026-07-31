@@ -1,5 +1,11 @@
 const CACHE = "leet-track-v1";
-const CORE = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
+const BASE = "/leet-track";
+const CORE = [
+  `${BASE}/`,
+  `${BASE}/manifest.webmanifest`,
+  `${BASE}/icon-192.png`,
+  `${BASE}/icon-512.png`,
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(CORE)));
@@ -26,6 +32,8 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/"))),
+      .catch(() =>
+        caches.match(event.request).then((cached) => cached || caches.match(`${BASE}/`)),
+      ),
   );
 });
