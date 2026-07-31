@@ -1,4 +1,4 @@
-const CACHE = "leet-track-v1";
+const CACHE = "leet-track-v2";
 const BASE = "/leet-track";
 const CORE = [
   `${BASE}/`,
