@@ -1,0 +1,27 @@
+{
+  "name": "题迹 · 力扣刷题记录",
+  "short_name": "题迹",
+  "description": "记录每一道题，看见每一点进步。",
+  "lang": "zh-CN",
+  "start_url": "/leet-track/",
+  "scope": "/leet-track/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f2eb",
+  "theme_color": "#17191a",
+  "categories": ["productivity", "education"],
+  "icons": [
+    {
+      "src": "/leet-track/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/leet-track/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
