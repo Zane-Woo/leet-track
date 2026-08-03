@@ -270,6 +270,7 @@ export function LeetTrackApp() {
   const [lastLeetcodeSync, setLastLeetcodeSync] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
   const lastPushedAtRef = useRef("");
+  const localRevisionRef = useRef(0);
   const localStateRef = useRef({ logs, favoriteSlugs, customProblems, weeklyGoal, localUpdatedAt });
 
   const problems = useMemo(() => [...CATALOG, ...customProblems], [customProblems]);
@@ -395,6 +396,7 @@ export function LeetTrackApp() {
     let active = true;
 
     async function reconcileCloud() {
+      const reconciliationRevision = localRevisionRef.current;
       setCloudReady(false);
       setCloudStatus("checking");
       setCloudMessage("正在比较本机与云端记录…");
@@ -402,6 +404,16 @@ export function LeetTrackApp() {
         const userId = cloudUser!.id;
         const cloudRow = await readCloudState(userId);
         if (!active) return;
+
+        // A LeetCode import or manual edit may finish while the cloud read is in
+        // flight. Never let the older cloud snapshot overwrite that new local
+        // state; the regular push effect below will upload the latest snapshot.
+        if (localRevisionRef.current !== reconciliationRevision) {
+          setCloudReady(true);
+          setCloudStatus("syncing");
+          setCloudMessage("检测到新的本机记录，正在同步到云端…");
+          return;
+        }
         const local = localStateRef.current;
 
         if (!cloudRow) {
@@ -583,12 +595,15 @@ export function LeetTrackApp() {
 
   function markLocalChange() {
     const changedAt = new Date().toISOString();
+    localRevisionRef.current += 1;
+    localStateRef.current = { ...localStateRef.current, localUpdatedAt: changedAt };
     setLocalUpdatedAt(changedAt);
     try {
       localStorage.setItem(LOCAL_UPDATED_KEY, changedAt);
     } catch {
       // The existing persistence guard will surface a storage failure.
     }
+    return changedAt;
   }
 
   async function requestCloudLogin(email: string) {
@@ -636,11 +651,18 @@ export function LeetTrackApp() {
       const result = await readRecentLeetCodeSubmissions(days);
       const merged = mergeLeetCodeSubmissions(localStateRef.current.logs, problems, result.submissions);
       if (merged.importedCount > 0) {
-        markLocalChange();
+        const changedAt = markLocalChange();
+        // Keep the ref in lock-step with React state so an overlapping cloud
+        // push can only see the newly imported records, never the old list.
+        localStateRef.current = {
+          ...localStateRef.current,
+          logs: merged.logs,
+          localUpdatedAt: changedAt,
+        };
         setLogs(merged.logs);
       }
       const details = [
-        merged.importedCount ? `新增 ${merged.importedCount} 条` : "没有新增记录",
+        merged.importedCount ? `新增 ${merged.importedCount} 条，当前共 ${merged.logs.length} 条` : "没有新增记录",
         merged.duplicateCount ? `${merged.duplicateCount} 条已存在` : "",
         merged.outsideListCount ? `${merged.outsideListCount} 条不在当前题单` : "",
       ].filter(Boolean).join("，");

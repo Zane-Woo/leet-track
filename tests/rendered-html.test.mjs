@@ -53,6 +53,8 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.match(source, /其他 \/ 自定义/);
   assert.match(source, /立即同步/);
   assert.match(source, /同步范围/);
+  assert.match(source, /localRevisionRef\.current !== reconciliationRevision/);
+  assert.match(source, /logs: merged\.logs/);
   assert.match(leetcodeSync, /leetcode-cn:/);
   assert.match(edgeFunction, /recentACSubmissions/);
   assert.match(edgeFunction, /auth: "publishable"/);
