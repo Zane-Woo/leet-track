@@ -53,6 +53,7 @@ const LEGACY_KEY = "leet-track-problems-v1";
 const GOAL_KEY = "leet-track-weekly-goal";
 const APPEARANCE_KEY = "leet-track-appearance";
 const RECOVERY_KEY = "leet-track-recovery-v1";
+const RECENT_PREVIEW_LIMIT = 4;
 const LOCAL_UPDATED_KEY = "leet-track-local-updated-at-v1";
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const DAY = 86_400_000;
@@ -922,6 +923,7 @@ function Dashboard({ problems, logs, weeklyGoal, onBrowse, onOpenProblem }: {
   onBrowse: () => void;
   onOpenProblem: (problem: CatalogProblem) => void;
 }) {
+  const [showAllRecent, setShowAllRecent] = useState(false);
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
   const solvedSlugs = new Set(logs.map((log) => log.problemSlug));
@@ -935,6 +937,8 @@ function Dashboard({ problems, logs, weeklyGoal, onBrowse, onOpenProblem }: {
   const mastered = [...latestByProblem.values()].filter((log) => log.status === "已掌握").length;
   const activity = getActivity(logs);
   const lookup = new Map(problems.map((problem) => [problem.slug, problem]));
+  const visibleLogs = showAllRecent ? logs : logs.slice(0, RECENT_PREVIEW_LIMIT);
+  const canExpandRecent = logs.length > RECENT_PREVIEW_LIMIT;
 
   return (
     <section className="page">
@@ -972,10 +976,23 @@ function Dashboard({ problems, logs, weeklyGoal, onBrowse, onOpenProblem }: {
         {logs.length === 0 ? (
           <EmptyState title="还没有记录" detail="去题库打下第一个勾。" action={{ label: "查看题库", onClick: onBrowse }} />
         ) : (
-          logs.slice(0, 4).map((log) => {
-            const problem = lookup.get(log.problemSlug);
-            return problem ? <RecentLogRow key={log.id} problem={problem} log={log} onClick={() => onOpenProblem(problem)} /> : null;
-          })
+          <>
+            {visibleLogs.map((log) => {
+              const problem = lookup.get(log.problemSlug);
+              return problem ? <RecentLogRow key={log.id} problem={problem} log={log} onClick={() => onOpenProblem(problem)} /> : null;
+            })}
+            {canExpandRecent && (
+              <button
+                className="recent-toggle"
+                type="button"
+                aria-expanded={showAllRecent}
+                onClick={() => setShowAllRecent((current) => !current)}
+              >
+                <span>{showAllRecent ? "收起记录" : `展开全部 ${logs.length} 条`}</span>
+                <span className="recent-toggle-icon" aria-hidden="true">⌄</span>
+              </button>
+            )}
+          </>
         )}
       </article>
     </section>

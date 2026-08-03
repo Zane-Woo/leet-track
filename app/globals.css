@@ -136,6 +136,26 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .easy { color: var(--easy); } .medium { color: var(--medium); } .hard { color: var(--hard); }
 .bookmark { color: var(--orange); font-size: 11px; }
 .chevron { color: color-mix(in srgb, var(--muted) 45%, transparent); font-size: 23px; }
+.recent-toggle {
+  width: 100%;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.recent-toggle:hover { background: color-mix(in srgb, var(--orange) 7%, transparent); color: var(--ink); }
+.recent-toggle:focus-visible { outline: 2px solid var(--orange); outline-offset: -2px; }
+.recent-toggle-icon { display: inline-block; font-size: 17px; line-height: 1; transition: transform 180ms ease; }
+.recent-toggle[aria-expanded="true"] .recent-toggle-icon { transform: rotate(180deg); }
 
 .tab-bar { position: fixed; z-index: 30; left: 50%; bottom: max(10px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(calc(100% - 24px), 580px); display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px 8px 7px; border: 1px solid color-mix(in srgb, var(--line) 75%, transparent); border-radius: 22px; background: color-mix(in srgb, var(--surface) 88%, transparent); box-shadow: 0 14px 45px rgba(0,0,0,.16); -webkit-backdrop-filter: blur(22px); backdrop-filter: blur(22px); }
 .tab-button { min-height: 52px; display: grid; place-items: center; gap: 1px; border: 0; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 15px; }

@@ -45,6 +45,8 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.match(source, /发现可恢复的本机记录/);
   assert.match(source, /parseLeetBackup/);
   assert.match(source, /今天刷哪题/);
+  assert.match(source, /展开全部 \$\{logs\.length\} 条/);
+  assert.match(source, /aria-expanded=\{showAllRecent\}/);
   assert.match(source, /选择常用标签/);
   assert.match(source, /其他 \/ 自定义/);
   assert.match(cloud, /sync_leet_track_state/);
