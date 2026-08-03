@@ -1,5 +1,10 @@
 import { createClient, type User } from "@supabase/supabase-js";
 import type { BackupV2 } from "./domain";
+import {
+  LEETCODE_USER_SLUG,
+  parseLeetCodeSyncResponse,
+  type LeetCodeSyncDays,
+} from "./leetcode-sync";
 
 // Publishable keys are intentionally safe to ship in a browser bundle. Access to
 // user data is enforced by the RLS policies in supabase/migrations.
@@ -49,4 +54,28 @@ export async function writeCloudState(
   if (error) throw error;
   if (data.user_id !== userId) throw new Error("Cloud user mismatch");
   return data;
+}
+
+export async function readRecentLeetCodeSubmissions(days: LeetCodeSyncDays) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 25_000);
+  let data: unknown;
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/leetcode-recent`, {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_PUBLISHABLE_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ userSlug: LEETCODE_USER_SLUG, days }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("LeetCode sync failed");
+    data = await response.json() as unknown;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+  const parsed = parseLeetCodeSyncResponse(data);
+  if (!parsed) throw new Error("Invalid LeetCode sync response");
+  return parsed;
 }

@@ -19,6 +19,7 @@ export type SolveLog = {
   status: Mastery;
   tags: string[];
   note: string;
+  source?: "leetcode-cn";
 };
 
 export type LegacyProblem = {
@@ -90,15 +91,18 @@ function isCatalogProblem(value: unknown): value is CatalogProblem {
 }
 
 function isSolveLog(value: unknown): value is SolveLog {
+  const sourceIsValid = !isRecord(value) || value.source === undefined || value.source === "leetcode-cn";
+  const minimumDuration = isRecord(value) && value.source === "leetcode-cn" ? 0 : 1;
   return isRecord(value)
     && isNonEmptyString(value.id)
     && isNonEmptyString(value.problemSlug)
     && isIsoDate(value.solvedAt)
-    && isFiniteNumber(value.duration, 1, 1_440)
+    && isFiniteNumber(value.duration, minimumDuration, 1_440)
     && isFiniteNumber(value.attempts, 1, 100)
     && isMastery(value.status)
     && isStringArray(value.tags)
-    && typeof value.note === "string";
+    && typeof value.note === "string"
+    && sourceIsValid;
 }
 
 function isLegacyProblem(value: unknown): value is LegacyProblem {

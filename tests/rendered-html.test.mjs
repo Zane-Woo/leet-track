@@ -26,9 +26,11 @@ test("server-renders LeetTrack metadata and loading shell", async () => {
 });
 
 test("ships the fixed catalogue, local persistence and safe offline fallback", async () => {
-  const [source, cloud, migration, catalogueRaw, config, manifestRaw, worker] = await Promise.all([
+  const [source, cloud, leetcodeSync, edgeFunction, migration, catalogueRaw, config, manifestRaw, worker] = await Promise.all([
     readFile(new URL("../app/LeetTrackApp.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/cloud.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/leetcode-sync.ts", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/functions/leetcode-recent/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260803_leet_track_cloud_sync.sql", import.meta.url), "utf8"),
     readFile(new URL("../app/problemCatalog.json", import.meta.url), "utf8"),
     readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
@@ -49,6 +51,11 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.match(source, /aria-expanded=\{showAllRecent\}/);
   assert.match(source, /选择常用标签/);
   assert.match(source, /其他 \/ 自定义/);
+  assert.match(source, /立即同步/);
+  assert.match(source, /同步范围/);
+  assert.match(leetcodeSync, /leetcode-cn:/);
+  assert.match(edgeFunction, /recentACSubmissions/);
+  assert.match(edgeFunction, /auth: "publishable"/);
   assert.match(cloud, /sync_leet_track_state/);
   assert.match(migration, /enable row level security/i);
   assert.match(migration, /auth\.uid\(\)/);

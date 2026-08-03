@@ -26,16 +26,25 @@ import {
   type SolveLog,
 } from "./domain";
 import {
+  readRecentLeetCodeSubmissions,
   readCloudState,
   supabase,
   writeCloudState,
   type CloudUser,
 } from "./cloud";
+import {
+  LEETCODE_PROFILE_URL,
+  LEETCODE_SYNC_RANGES,
+  LEETCODE_USER_SLUG,
+  mergeLeetCodeSubmissions,
+  type LeetCodeSyncDays,
+} from "./leetcode-sync";
 
 type Tab = "today" | "library" | "insights" | "settings";
 type Appearance = "system" | "light" | "dark";
 type ProgressFilter = "全部" | "未刷" | "已刷";
 type CloudSyncStatus = "checking" | "signed-out" | "email-sent" | "syncing" | "synced" | "error";
+type LeetCodeSyncStatus = "idle" | "syncing" | "success" | "error";
 
 type EditorRequest = { problem: CatalogProblem; log?: SolveLog };
 
@@ -256,6 +265,9 @@ export function LeetTrackApp() {
   const [lastCloudSync, setLastCloudSync] = useState("");
   const [localUpdatedAt, setLocalUpdatedAt] = useState(NEVER_UPDATED);
   const [syncRequest, setSyncRequest] = useState(0);
+  const [leetcodeSyncStatus, setLeetcodeSyncStatus] = useState<LeetCodeSyncStatus>("idle");
+  const [leetcodeSyncMessage, setLeetcodeSyncMessage] = useState("选择时间范围后手动同步，不会覆盖现有记录。");
+  const [lastLeetcodeSync, setLastLeetcodeSync] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
   const lastPushedAtRef = useRef("");
   const localStateRef = useRef({ logs, favoriteSlugs, customProblems, weeklyGoal, localUpdatedAt });
@@ -612,6 +624,35 @@ export function LeetTrackApp() {
     setSyncRequest((current) => current + 1);
   }
 
+  async function syncLeetCode(days: LeetCodeSyncDays) {
+    if (!storageWritable) {
+      setLeetcodeSyncStatus("error");
+      setLeetcodeSyncMessage("本机数据保护已开启，请先导出备份并处理存储异常。");
+      return;
+    }
+    setLeetcodeSyncStatus("syncing");
+    setLeetcodeSyncMessage(`正在读取最近 ${days} 天的力扣通过记录…`);
+    try {
+      const result = await readRecentLeetCodeSubmissions(days);
+      const merged = mergeLeetCodeSubmissions(localStateRef.current.logs, problems, result.submissions);
+      if (merged.importedCount > 0) {
+        markLocalChange();
+        setLogs(merged.logs);
+      }
+      const details = [
+        merged.importedCount ? `新增 ${merged.importedCount} 条` : "没有新增记录",
+        merged.duplicateCount ? `${merged.duplicateCount} 条已存在` : "",
+        merged.outsideListCount ? `${merged.outsideListCount} 条不在当前题单` : "",
+      ].filter(Boolean).join("，");
+      setLastLeetcodeSync(new Date().toISOString());
+      setLeetcodeSyncStatus("success");
+      setLeetcodeSyncMessage(`${details}。${result.limited && days > 3 ? "力扣公开主页最多提供最近 15 条，较长范围可能不完整。" : ""}`);
+    } catch {
+      setLeetcodeSyncStatus("error");
+      setLeetcodeSyncMessage("暂时无法读取力扣记录，请稍后再点一次同步。");
+    }
+  }
+
   function logsFor(slug: string) {
     return orderedLogs.filter((log) => log.problemSlug === slug);
   }
@@ -796,6 +837,9 @@ export function LeetTrackApp() {
             cloudStatus={cloudStatus}
             cloudMessage={cloudMessage}
             lastCloudSync={lastCloudSync}
+            leetcodeSyncStatus={leetcodeSyncStatus}
+            leetcodeSyncMessage={leetcodeSyncMessage}
+            lastLeetcodeSync={lastLeetcodeSync}
             onGoalChange={(goal) => {
               markLocalChange();
               setWeeklyGoal(goal);
@@ -805,6 +849,7 @@ export function LeetTrackApp() {
             onCloudLogin={requestCloudLogin}
             onCloudSignOut={signOutCloud}
             onCloudSync={syncCloudNow}
+            onLeetCodeSync={syncLeetCode}
             onExport={exportBackup}
             onImport={() => importRef.current?.click()}
             recoverableCount={bestRecovery?.logs.length ?? 0}
@@ -1208,7 +1253,7 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
   );
 }
 
-function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, recoverableCount, cloudUser, cloudStatus, cloudMessage, lastCloudSync, onGoalChange, onAppearanceChange, onInstall, onCloudLogin, onCloudSignOut, onCloudSync, onExport, onImport, onRecover, onClear }: {
+function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, recoverableCount, cloudUser, cloudStatus, cloudMessage, lastCloudSync, leetcodeSyncStatus, leetcodeSyncMessage, lastLeetcodeSync, onGoalChange, onAppearanceChange, onInstall, onCloudLogin, onCloudSignOut, onCloudSync, onLeetCodeSync, onExport, onImport, onRecover, onClear }: {
   logs: SolveLog[];
   solvedCount: number;
   weeklyGoal: number;
@@ -1219,18 +1264,23 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
   cloudStatus: CloudSyncStatus;
   cloudMessage: string;
   lastCloudSync: string;
+  leetcodeSyncStatus: LeetCodeSyncStatus;
+  leetcodeSyncMessage: string;
+  lastLeetcodeSync: string;
   onGoalChange: (goal: number) => void;
   onAppearanceChange: (appearance: Appearance) => void;
   onInstall: () => void;
   onCloudLogin: (email: string) => Promise<void>;
   onCloudSignOut: () => Promise<void>;
   onCloudSync: () => void;
+  onLeetCodeSync: (days: LeetCodeSyncDays) => Promise<void>;
   onExport: () => void;
   onImport: () => void;
   onRecover?: () => void;
   onClear: () => void;
 }) {
   const [email, setEmail] = useState("");
+  const [leetcodeSyncDays, setLeetcodeSyncDays] = useState<LeetCodeSyncDays>(3);
   const cloudBusy = cloudStatus === "checking" || cloudStatus === "syncing";
   const cloudStatusLabel = cloudStatus === "synced"
     ? "已同步"
@@ -1249,6 +1299,31 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
       <SettingsGroup title="题单">
         <div className="settings-row"><span>真 Hot 100</span><strong>117 题</strong></div>
         <a className="full-row-button settings-link" href={LIST_URL} target="_blank" rel="noreferrer">打开原题单 <span>↗</span></a>
+      </SettingsGroup>
+      <SettingsGroup title="力扣同步">
+        <a className="settings-row leetcode-account" href={LEETCODE_PROFILE_URL} target="_blank" rel="noreferrer">
+          <span>公开账号</span><strong>@{LEETCODE_USER_SLUG} ↗</strong>
+        </a>
+        <label className="settings-row leetcode-range" htmlFor="leetcode-sync-days">
+          <span>同步范围</span>
+          <select
+            id="leetcode-sync-days"
+            value={leetcodeSyncDays}
+            onChange={(event) => setLeetcodeSyncDays(Number(event.target.value) as LeetCodeSyncDays)}
+            disabled={leetcodeSyncStatus === "syncing"}
+          >
+            {LEETCODE_SYNC_RANGES.map((days) => <option key={days} value={days}>最近 {days} 天</option>)}
+          </select>
+        </label>
+        <div className={`leetcode-sync-copy ${leetcodeSyncStatus}`} role="status">
+          <strong>{leetcodeSyncStatus === "syncing" ? "正在同步" : leetcodeSyncStatus === "success" ? "同步完成" : leetcodeSyncStatus === "error" ? "同步失败" : "手动同步"}</strong>
+          <span>{leetcodeSyncMessage}</span>
+          {lastLeetcodeSync && <small>上次同步：{formatDateTime(lastLeetcodeSync)}</small>}
+        </div>
+        <button className="full-row-button leetcode-sync-button" onClick={() => void onLeetCodeSync(leetcodeSyncDays)} disabled={leetcodeSyncStatus === "syncing"}>
+          {leetcodeSyncStatus === "syncing" ? "正在读取…" : "立即同步"} <span>↻</span>
+        </button>
+        <p className="leetcode-sync-note">只导入当前题单中的通过记录；按力扣提交 ID 去重，不修改已有备注和状态。</p>
       </SettingsGroup>
       <SettingsGroup title="目标">
         <div className="settings-row"><span>每周目标</span><div className="stepper"><button onClick={() => onGoalChange(Math.max(1, weeklyGoal - 1))} aria-label="减少每周目标">−</button><strong>{weeklyGoal} 次</strong><button onClick={() => onGoalChange(Math.min(30, weeklyGoal + 1))} aria-label="增加每周目标">＋</button></div></div>
@@ -1345,7 +1420,7 @@ function ProblemDetail({ problem, logs, favorite, onClose, onAdd, onEdit, onDele
             {logs.map((log) => (
               <article className="surface history-card" key={log.id}>
                 <div className="history-meta"><strong>{statusMark[log.status]} {log.status}</strong><span>{formatDateTime(log.solvedAt)}</span></div>
-                <p>{log.duration} 分钟 · 尝试 {log.attempts} 次{log.tags.length ? ` · ${log.tags.join(" / ")}` : ""}</p>
+                <p>{log.source === "leetcode-cn" && log.duration === 0 ? "力扣同步 · 用时未记录" : `${log.duration} 分钟 · 尝试 ${log.attempts} 次`}{log.tags.length ? ` · ${log.tags.join(" / ")}` : ""}</p>
                 {log.note && <blockquote>{log.note}</blockquote>}
                 <div><button onClick={() => onEdit(log)}>编辑</button><button className="danger-link" onClick={() => onDelete(log)}>删除这次</button></div>
               </article>
@@ -1387,7 +1462,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
   const { problem, log } = request;
   const [status, setStatus] = useState<Mastery>(log?.status ?? "待复习");
   const [solvedAt, setSolvedAt] = useState(inputDate(log?.solvedAt ?? new Date().toISOString()));
-  const [duration, setDuration] = useState(log?.duration ?? 30);
+  const [duration, setDuration] = useState(Math.max(log?.duration ?? 30, 1));
   const [attempts, setAttempts] = useState(log?.attempts ?? 1);
   const [tags, setTags] = useState<string[]>(log?.tags ?? []);
   const [note, setNote] = useState(log?.note ?? "");

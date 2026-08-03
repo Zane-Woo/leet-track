@@ -234,6 +234,27 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .cloud-login input { min-width: 0; flex: 1; height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); color: var(--ink); font-size: 16px; }
 .cloud-login button { min-width: 88px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 11px; background: var(--ink); color: var(--canvas); font-size: 12px; font-weight: 750; cursor: pointer; }
 .cloud-login button:disabled { opacity: .38; }
+.leetcode-account { color: var(--ink); text-decoration: none; }
+.leetcode-account strong { max-width: 68%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.leetcode-range select {
+  min-width: 112px;
+  min-height: 44px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--canvas);
+  color: var(--ink);
+  font-size: 16px;
+}
+.leetcode-sync-copy { display: grid; gap: 4px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.leetcode-sync-copy strong { font-size: 13px; }
+.leetcode-sync-copy span, .leetcode-sync-copy small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.leetcode-sync-copy.success strong { color: var(--easy); }
+.leetcode-sync-copy.error strong { color: var(--hard); }
+.leetcode-sync-copy.syncing strong { color: var(--medium); }
+.leetcode-sync-button { color: var(--orange); font-weight: 750; }
+.leetcode-sync-button span { color: var(--orange); }
+.leetcode-sync-note { margin: 0; padding: 10px 14px 12px; color: var(--muted); font-size: 10px; line-height: 1.55; }
 .stepper, .inline-stepper { display: flex; align-items: center; gap: 9px; }
 .stepper button, .inline-stepper button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); cursor: pointer; }
 .stepper strong { min-width: 45px; text-align: center; font-size: 12px; }
