@@ -1,6 +1,6 @@
 1:"$Sreact.fragment"
-2:I[89265,["/leet-track/_next/static/chunks/0dbhjjzl8qfwv.js","/leet-track/_next/static/chunks/0zw_lxgjvv.4j.js"],"LeetTrackApp"]
+2:I[89265,["/leet-track/_next/static/chunks/0dbhjjzl8qfwv.js","/leet-track/_next/static/chunks/165qcjq-u44nz.js"],"LeetTrackApp"]
 3:I[97367,["/leet-track/_next/static/chunks/0dbhjjzl8qfwv.js"],"OutletBoundary"]
 4:"$Sreact.suspense"
-0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{}],[["$","script","script-0",{"src":"/leet-track/_next/static/chunks/0zw_lxgjvv.4j.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"FUx9eEaIePEj6FbHm1spr"}
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{}],[["$","script","script-0",{"src":"/leet-track/_next/static/chunks/165qcjq-u44nz.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"FQPX24uFCahlE0aBGilz8"}
 5:null
