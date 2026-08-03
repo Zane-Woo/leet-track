@@ -4,10 +4,7 @@ import "./globals.css";
 const basePath = "/leet-track";
 
 export const metadata: Metadata = {
-  title: {
-    default: "题迹 · 力扣刷题记录",
-    template: "%s · 题迹",
-  },
+  title: "题迹 · 力扣刷题记录",
   description: "记录每一道题，看见每一点进步。数据只保存在你的设备上。",
   applicationName: "题迹",
   metadataBase: new URL("https://zane-woo.github.io/leet-track/"),

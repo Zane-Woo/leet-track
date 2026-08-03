@@ -10,56 +10,20 @@ import {
   useState,
 } from "react";
 import catalogJson from "./problemCatalog.json";
+import {
+  parseLeetBackup,
+  safeLocalDateToIso,
+  type BackupV2,
+  type CatalogProblem,
+  type Difficulty,
+  type LegacyProblem,
+  type Mastery,
+  type SolveLog,
+} from "./domain";
 
-type Difficulty = "简单" | "中等" | "困难";
-type Mastery = "待复习" | "巩固中" | "已掌握";
 type Tab = "today" | "library" | "insights" | "settings";
 type Appearance = "system" | "light" | "dark";
 type ProgressFilter = "全部" | "未刷" | "已刷";
-
-type CatalogProblem = {
-  order: number;
-  number: string;
-  title: string;
-  slug: string;
-  difficulty: Difficulty;
-  custom?: boolean;
-};
-
-type SolveLog = {
-  id: string;
-  problemSlug: string;
-  solvedAt: string;
-  duration: number;
-  attempts: number;
-  status: Mastery;
-  tags: string[];
-  note: string;
-};
-
-type LegacyProblem = {
-  id: string;
-  number: string;
-  title: string;
-  difficulty: Difficulty;
-  status: Mastery;
-  tags: string[];
-  solvedAt: string;
-  duration: number;
-  attempts: number;
-  note: string;
-  favorite: boolean;
-};
-
-type BackupV2 = {
-  version: 2;
-  exportedAt: string;
-  listSlug: "7m3kaU3o";
-  weeklyGoal: number;
-  logs: SolveLog[];
-  favoriteSlugs: string[];
-  customProblems: CatalogProblem[];
-};
 
 type EditorRequest = { problem: CatalogProblem; log?: SolveLog };
 
@@ -130,6 +94,20 @@ function startOfWeek(date: Date) {
 
 function sortLogs(logs: SolveLog[]) {
   return [...logs].sort((a, b) => +new Date(b.solvedAt) - +new Date(a.solvedAt));
+}
+
+function useEscape(onEscape: () => void) {
+  const onEscapeRef = useRef(onEscape);
+  useEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onEscapeRef.current();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 }
 
 function isBundledDemo(items: LegacyProblem[]) {
@@ -325,22 +303,30 @@ export function LeetTrackApp() {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `题迹备份-${localDateKey(new Date())}.json`;
+    document.body.append(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   async function importBackup(file: File) {
     try {
-      const backup = JSON.parse(await file.text()) as BackupV2 | { version: 1; weeklyGoal: number; problems: LegacyProblem[] };
-      if (backup.version === 2 && Array.isArray(backup.logs)) {
-        setLogs(backup.logs);
-        setFavoriteSlugs(Array.isArray(backup.favoriteSlugs) ? backup.favoriteSlugs : []);
-        setCustomProblems(Array.isArray(backup.customProblems) ? backup.customProblems : []);
+      const backup = parseLeetBackup(JSON.parse(await file.text()));
+      if (!backup) throw new Error("invalid backup");
+      if (backup.version === 2) {
+        const custom = backup.customProblems.filter((problem) =>
+          !CATALOG.some((catalogProblem) => catalogProblem.slug === problem.slug),
+        );
+        const knownSlugs = new Set([...CATALOG, ...custom].map((problem) => problem.slug));
+        const validLogs = backup.logs.filter((log) => knownSlugs.has(log.problemSlug));
+        setLogs(validLogs);
+        setFavoriteSlugs(backup.favoriteSlugs.filter((slug) => knownSlugs.has(slug)));
+        setCustomProblems(custom);
         setWeeklyGoal(Number(backup.weeklyGoal) || 7);
-        window.alert(`已恢复 ${backup.logs.length} 条刷题记录。`);
+        window.alert(`已恢复 ${validLogs.length} 条刷题记录。`);
         return;
       }
-      if (backup.version === 1 && Array.isArray(backup.problems)) {
+      if (backup.version === 1) {
         const migrated = migrateLegacy(backup.problems);
         setLogs(migrated.logs);
         setFavoriteSlugs(migrated.favorites);
@@ -678,17 +664,17 @@ function Library({ problems, logs, favoriteSlugs, onOpen, onToggleChecked, onTog
       <div className="catalog-progress" aria-hidden="true"><i style={{ width: `${(solvedCount / problems.length) * 100}%` }} /></div>
       <label className="search-field">
         <span aria-hidden="true">⌕</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题号、名称或笔记标签" />
+        <input aria-label="搜索题目" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题号、名称或笔记标签" />
       </label>
       <div className="filter-row" aria-label="完成状态筛选">
         {(["全部", "未刷", "已刷"] as ProgressFilter[]).map((item) => (
-          <button key={item} className={progressFilter === item ? "filter active" : "filter"} onClick={() => setProgressFilter(item)}>{item}</button>
+          <button key={item} aria-pressed={progressFilter === item} className={progressFilter === item ? "filter active" : "filter"} onClick={() => setProgressFilter(item)}>{item}</button>
         ))}
         <span className="filter-divider" aria-hidden="true" />
         {(["简单", "中等", "困难"] as Difficulty[]).map((item) => (
-          <button key={item} className={difficulty === item ? "filter active" : "filter"} onClick={() => setDifficulty(difficulty === item ? "全部" : item)}>{item}</button>
+          <button key={item} aria-pressed={difficulty === item} className={difficulty === item ? "filter active" : "filter"} onClick={() => setDifficulty(difficulty === item ? "全部" : item)}>{item}</button>
         ))}
-        <button className={favoritesOnly ? "filter favorite active" : "filter favorite"} onClick={() => setFavoritesOnly(!favoritesOnly)}>◆ 收藏</button>
+        <button aria-pressed={favoritesOnly} className={favoritesOnly ? "filter favorite active" : "filter favorite"} onClick={() => setFavoritesOnly(!favoritesOnly)}>◆ 收藏</button>
       </div>
       <div className="library-count">显示 {filtered.length} 题 · 点击圆圈勾选或取消</div>
       {filtered.length === 0 ? (
@@ -820,7 +806,7 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
         <div className="settings-row"><span>每周刷题次数</span><div className="stepper"><button onClick={() => onGoalChange(Math.max(1, weeklyGoal - 1))} aria-label="减少每周目标">−</button><strong>{weeklyGoal} 次</strong><button onClick={() => onGoalChange(Math.min(30, weeklyGoal + 1))} aria-label="增加每周目标">＋</button></div></div>
       </SettingsGroup>
       <SettingsGroup title="外观">
-        <div className="appearance-options">{([["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]] as [Appearance, string][]).map(([value, label]) => <button key={value} className={appearance === value ? "active" : ""} onClick={() => onAppearanceChange(value)}>{label}</button>)}</div>
+        <div className="appearance-options">{([["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]] as [Appearance, string][]).map(([value, label]) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => onAppearanceChange(value)}>{label}</button>)}</div>
       </SettingsGroup>
       <SettingsGroup title="数据">
         <div className="settings-row"><span>当前进度</span><strong>{solvedCount} 题 / {logs.length} 次</strong></div>
@@ -852,11 +838,12 @@ function ProblemDetail({ problem, logs, favorite, onClose, onAdd, onEdit, onDele
   onToggleFavorite: () => void;
   onUncheck: () => void;
 }) {
+  useEscape(onClose);
   const meta = difficultyMeta[problem.difficulty];
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="editor-sheet detail-sheet" role="dialog" aria-modal="true" aria-label={`${problem.title}的刷题记录`}>
-        <header><button onClick={onClose}>关闭</button><h2>刷题记录</h2><button onClick={onAdd}>再刷一次</button></header>
+        <header><button autoFocus onClick={onClose}>关闭</button><h2>刷题记录</h2><button onClick={onAdd}>再刷一次</button></header>
         <div className="editor-content">
           <div className="detail-heading">
             <div><span className={meta.className}>#{problem.number} · {problem.difficulty}</span><h3>{problem.title}</h3></div>
@@ -887,13 +874,14 @@ function ConfirmUncheck({ problem, count, onCancel, onConfirm }: {
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  useEscape(onCancel);
   return (
     <div className="modal-backdrop confirm-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <section className="confirm-card surface" role="alertdialog" aria-modal="true" aria-label={`取消${problem.title}的已刷状态`}>
         <span className="confirm-icon">↶</span>
         <h2>取消这道题的勾选？</h2>
         <p>“{problem.title}”将恢复为未刷状态，同时删除 {count} 条刷题记录。</p>
-        <div><button onClick={onCancel}>保留记录</button><button className="confirm-danger" onClick={onConfirm}>取消勾选</button></div>
+        <div><button autoFocus onClick={onCancel}>保留记录</button><button className="confirm-danger" onClick={onConfirm}>取消勾选</button></div>
       </section>
     </div>
   );
@@ -905,6 +893,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
   onCancel: () => void;
   onSave: (log: SolveLog, favorite: boolean) => void;
 }) {
+  useEscape(onCancel);
   const { problem, log } = request;
   const [status, setStatus] = useState<Mastery>(log?.status ?? "待复习");
   const [solvedAt, setSolvedAt] = useState(inputDate(log?.solvedAt ?? new Date().toISOString()));
@@ -916,11 +905,16 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
 
   function submit(event: FormEvent) {
     event.preventDefault();
+    const solvedAtIso = safeLocalDateToIso(solvedAt);
+    if (!solvedAtIso) {
+      window.alert("请选择有效的完成时间。");
+      return;
+    }
     onSave({
       id: log?.id ?? crypto.randomUUID(),
       problemSlug: problem.slug,
       status,
-      solvedAt: new Date(solvedAt).toISOString(),
+      solvedAt: solvedAtIso,
       duration,
       attempts,
       tags: [...new Set(tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))],
@@ -931,7 +925,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <form className="editor-sheet" onSubmit={submit} role="dialog" aria-modal="true" aria-label={`记录${problem.title}`}>
-        <header><button type="button" onClick={onCancel}>取消</button><h2>{log ? "编辑记录" : "记录这一次"}</h2><button type="submit">保存</button></header>
+        <header><button autoFocus type="button" onClick={onCancel}>取消</button><h2>{log ? "编辑记录" : "记录这一次"}</h2><button type="submit">保存</button></header>
         <div className="editor-content">
           <div className="selected-problem surface">
             <span className={difficultyMeta[problem.difficulty].className}>#{problem.number} · {problem.difficulty}</span>
@@ -939,7 +933,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
           </div>
           <fieldset><legend>本次状态</legend><div className="surface form-surface"><Segmented values={["待复习", "巩固中", "已掌握"] as Mastery[]} value={status} onChange={setStatus} /></div></fieldset>
           <fieldset><legend>本次记录</legend><div className="surface form-surface">
-            <label className="form-row"><span>完成时间</span><input type="datetime-local" value={solvedAt} onChange={(event) => setSolvedAt(event.target.value)} /></label>
+            <label className="form-row"><span>完成时间</span><input required type="datetime-local" value={solvedAt} onChange={(event) => setSolvedAt(event.target.value)} /></label>
             <NumberStepper label="用时" value={duration} unit="分钟" min={1} max={300} step={5} onChange={setDuration} />
             <NumberStepper label="尝试次数" value={attempts} unit="次" min={1} max={20} step={1} onChange={setAttempts} />
           </div></fieldset>
