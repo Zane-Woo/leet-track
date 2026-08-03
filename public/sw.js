@@ -1,4 +1,4 @@
-const CACHE = "leet-track-v3";
+const CACHE = "leet-track-v4";
 const BASE = new URL(self.registration.scope).pathname.replace(/\/$/, "");
 const CORE = [
   `${BASE}/`,

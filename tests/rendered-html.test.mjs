@@ -41,8 +41,12 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.match(source, /storageWritable/);
   assert.match(source, /发现可恢复的本机记录/);
   assert.match(source, /parseLeetBackup/);
+  assert.match(source, /今天刷哪题/);
+  assert.match(source, /选择常用标签/);
+  assert.match(source, /其他 \/ 自定义/);
   assert.match(config, /output:\s*isGitHubPages \? "export"/);
   assert.equal(JSON.parse(manifestRaw).display, "standalone");
   assert.match(worker, /event\.request\.mode === "navigate"/);
   assert.match(worker, /requestUrl\.origin !== self\.location\.origin/);
+  assert.match(worker, /leet-track-v4/);
 });

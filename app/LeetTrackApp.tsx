@@ -49,6 +49,23 @@ const RECOVERY_KEY = "leet-track-recovery-v1";
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const DAY = 86_400_000;
 const INVALID_JSON = Symbol("invalid-json");
+const CUSTOM_TAG = "__custom__";
+const COMMON_TAGS = [
+  "数组",
+  "哈希表",
+  "双指针",
+  "滑动窗口",
+  "二分查找",
+  "栈",
+  "队列",
+  "链表",
+  "二叉树",
+  "回溯",
+  "贪心",
+  "动态规划",
+  "图",
+  "堆",
+] as const;
 
 const difficultyMeta: Record<Difficulty, { className: string; mark: string }> = {
   简单: { className: "easy", mark: "叶" },
@@ -673,13 +690,13 @@ function Dashboard({ problems, logs, weeklyGoal, onBrowse, onOpenProblem }: {
 
   return (
     <section className="page">
-      <PageHeader eyebrow={greeting} title="今天，继续向前一题。" action={{ label: "打开题库", onClick: onBrowse }} />
+      <PageHeader eyebrow={greeting} title="今天刷哪题？" action={{ label: "打开题库", onClick: onBrowse }} />
 
       <article className="goal-panel">
         <div>
-          <p className="panel-kicker">◎ 真hot100 题单进度</p>
+          <p className="panel-kicker">真 Hot 100 · 题单进度</p>
           <strong>{solvedCount} <span>/ {problems.length}</span></strong>
-          <p>{solvedCount === problems.length ? "题单全部刷完，漂亮！" : `还有 ${problems.length - solvedCount} 题尚未打勾`}</p>
+          <p>{solvedCount === problems.length ? "全部完成" : `还有 ${problems.length - solvedCount} 题`}</p>
         </div>
         <div
           className="progress-ring"
@@ -703,9 +720,9 @@ function Dashboard({ problems, logs, weeklyGoal, onBrowse, onOpenProblem }: {
       </article>
 
       <article className="surface recent-card">
-        <SectionTitle title="最近记录" detail={`${logs.length} 次刷题`} />
+        <SectionTitle title="最近记录" detail={`${logs.length} 次`} />
         {logs.length === 0 ? (
-          <EmptyState title="从题单里打第一个勾" detail="进入题库，点题目前面的圆圈并记录本次练习。" action={{ label: "查看 117 道题", onClick: onBrowse }} />
+          <EmptyState title="还没有记录" detail="去题库打下第一个勾。" action={{ label: "查看题库", onClick: onBrowse }} />
         ) : (
           logs.slice(0, 4).map((log) => {
             const problem = lookup.get(log.problemSlug);
@@ -809,11 +826,11 @@ function Library({ problems, logs, favoriteSlugs, onOpen, onToggleChecked, onTog
 
   return (
     <section className="page library-page">
-      <PageHeader eyebrow={`已刷 ${solvedCount} / ${problems.length}`} title="真hot100 题库" />
+      <PageHeader eyebrow={`${solvedCount} / ${problems.length} 已刷`} title="真 Hot 100" />
       <div className="catalog-progress" aria-hidden="true"><i style={{ width: `${(solvedCount / problems.length) * 100}%` }} /></div>
       <label className="search-field">
         <span aria-hidden="true">⌕</span>
-        <input aria-label="搜索题目" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题号、名称或笔记标签" />
+        <input aria-label="搜索题目" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索题号、题名或标签" />
       </label>
       <div className="filter-row" aria-label="完成状态筛选">
         {(["全部", "未刷", "已刷"] as ProgressFilter[]).map((item) => (
@@ -825,9 +842,9 @@ function Library({ problems, logs, favoriteSlugs, onOpen, onToggleChecked, onTog
         ))}
         <button aria-pressed={favoritesOnly} className={favoritesOnly ? "filter favorite active" : "filter favorite"} onClick={() => setFavoritesOnly(!favoritesOnly)}>◆ 收藏</button>
       </div>
-      <div className="library-count">显示 {filtered.length} 题 · 点击圆圈勾选或取消</div>
+      <div className="library-count">{filtered.length} 题 · 点圆圈勾选或取消</div>
       {filtered.length === 0 ? (
-        <EmptyState title="没有找到匹配题目" detail="换个题号、名称或筛选条件试试。" />
+        <EmptyState title="没有匹配题目" detail="换个搜索词或筛选条件。" />
       ) : (
         <div className="library-list surface">
           {filtered.map((problem) => (
@@ -864,7 +881,7 @@ function CatalogRow({ problem, logs, favorite, onOpen, onToggleChecked, onToggle
       <button className="catalog-main" onClick={onOpen}>
         <span className="problem-copy">
           <strong><small>#{problem.number || "—"}</small>{problem.title}</strong>
-          <span><b className={meta.className}>{problem.difficulty}</b> · {solved ? `刷过 ${logs.length} 次 · 最近 ${formatDate(latest.solvedAt)}` : "尚未刷过"}</span>
+          <span><b className={meta.className}>{problem.difficulty}</b> · {solved ? `${logs.length} 次 · ${formatDate(latest.solvedAt)}` : "未刷"}</span>
         </span>
       </button>
       <button className={favorite ? "favorite-button active" : "favorite-button"} onClick={onToggleFavorite} aria-label={favorite ? "取消收藏" : "收藏"}>◆</button>
@@ -894,7 +911,7 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
     <section className="page">
       <PageHeader title="统计" />
       {logs.length === 0 ? (
-        <EmptyState title="数据正在等待第一个勾" detail="记录一次刷题后，这里会展示练习趋势。" />
+        <EmptyState title="还没有统计" detail="完成一次刷题后即可查看。" />
       ) : (
         <>
           <div className="metric-line insights-metrics">
@@ -903,7 +920,7 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
             <div className="duration-metric"><strong>{totalMinutes >= 60 ? `${(totalMinutes / 60).toFixed(1)}h` : `${totalMinutes}m`}</strong><span>累计投入</span></div>
           </div>
           <article className="surface insight-card">
-            <SectionTitle title="已刷难度分布" />
+            <SectionTitle title="难度分布" />
             <div className="donut-layout">
               <div className="donut" style={{ background: `conic-gradient(var(--easy) 0 ${easyDeg}deg, var(--medium) ${easyDeg}deg ${easyDeg + mediumDeg}deg, var(--hard) ${easyDeg + mediumDeg}deg 360deg)` }}>
                 <div><strong>{solvedProblems.length}</strong><span>题</span></div>
@@ -916,7 +933,7 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
           <article className="surface insight-card"><SectionTitle title="活跃趋势" detail="近 7 天" /><ActivityChart activity={getActivity(logs)} /></article>
           <article className="surface insight-card">
             <SectionTitle title="高频标签" detail="TOP 5" />
-            {topTags.length === 0 ? <p className="muted-copy">记录标签后，这里会显示你的练习重点。</p> : (
+            {topTags.length === 0 ? <p className="muted-copy">添加标签后显示练习重点。</p> : (
               <div className="tag-stats">{topTags.map(([tag, count], index) => <div key={tag}><p><strong>{tag}</strong><span>{count} 次</span></p><div><i className={index === 0 ? "top" : ""} style={{ width: `${(count / topCount) * 100}%` }} /></div></div>)}</div>
             )}
           </article>
@@ -946,15 +963,15 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
       <PageHeader title="设置" />
       <article className="install-card">
         <span className="mini-app-icon">✓</span>
-        <div><strong>安装到 iPhone 主屏幕</strong><p>全屏打开，使用体验更像原生 App。</p></div>
+        <div><strong>安装到 iPhone</strong><p>从主屏幕快速打开</p></div>
         <button onClick={onInstall}>{installPromptAvailable ? "安装" : "查看方法"}</button>
       </article>
       <SettingsGroup title="题单">
-        <div className="settings-row"><span>真hot100</span><strong>117 题</strong></div>
-        <a className="full-row-button settings-link" href={LIST_URL} target="_blank" rel="noreferrer">查看力扣原题单 <span>↗</span></a>
+        <div className="settings-row"><span>真 Hot 100</span><strong>117 题</strong></div>
+        <a className="full-row-button settings-link" href={LIST_URL} target="_blank" rel="noreferrer">打开原题单 <span>↗</span></a>
       </SettingsGroup>
       <SettingsGroup title="目标">
-        <div className="settings-row"><span>每周刷题次数</span><div className="stepper"><button onClick={() => onGoalChange(Math.max(1, weeklyGoal - 1))} aria-label="减少每周目标">−</button><strong>{weeklyGoal} 次</strong><button onClick={() => onGoalChange(Math.min(30, weeklyGoal + 1))} aria-label="增加每周目标">＋</button></div></div>
+        <div className="settings-row"><span>每周目标</span><div className="stepper"><button onClick={() => onGoalChange(Math.max(1, weeklyGoal - 1))} aria-label="减少每周目标">−</button><strong>{weeklyGoal} 次</strong><button onClick={() => onGoalChange(Math.min(30, weeklyGoal + 1))} aria-label="增加每周目标">＋</button></div></div>
       </SettingsGroup>
       <SettingsGroup title="外观">
         <div className="appearance-options">{([["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]] as [Appearance, string][]).map(([value, label]) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => onAppearanceChange(value)}>{label}</button>)}</div>
@@ -966,7 +983,7 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
         {onRecover && <button className="full-row-button recovery-link" onClick={onRecover}>恢复本机旧记录 <span>{recoverableCount} 条 ›</span></button>}
         <button className="full-row-button danger-link" onClick={onClear} disabled={!logs.length}>清空刷题记录 <span>›</span></button>
       </SettingsGroup>
-      <p className="privacy-note"><strong>数据只属于你</strong><br />记录保存在当前浏览器或主屏幕 App 的独立空间。请固定使用同一入口；换设备、换浏览器或清除网站数据前，请先导出备份。</p>
+      <p className="privacy-note"><strong>数据保存在当前入口</strong><br />换设备、浏览器或清除数据前，请先导出备份。</p>
     </section>
   );
 }
@@ -1041,7 +1058,7 @@ function ConfirmUncheck({ problem, count, onCancel, onConfirm }: {
       <section className="confirm-card surface" role="alertdialog" aria-modal="true" aria-label={`取消${problem.title}的已刷状态`}>
         <span className="confirm-icon">↶</span>
         <h2>取消这道题的勾选？</h2>
-        <p>“{problem.title}”将恢复为未刷状态，同时删除 {count} 条刷题记录。</p>
+        <p>“{problem.title}”会变回未刷，并删除 {count} 条记录。</p>
         <div><button autoFocus onClick={onCancel}>保留记录</button><button className="confirm-danger" onClick={onConfirm}>取消勾选</button></div>
       </section>
     </div>
@@ -1060,7 +1077,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
   const [solvedAt, setSolvedAt] = useState(inputDate(log?.solvedAt ?? new Date().toISOString()));
   const [duration, setDuration] = useState(log?.duration ?? 30);
   const [attempts, setAttempts] = useState(log?.attempts ?? 1);
-  const [tags, setTags] = useState(log?.tags.join("，") ?? "");
+  const [tags, setTags] = useState<string[]>(log?.tags ?? []);
   const [note, setNote] = useState(log?.note ?? "");
   const [isFavorite, setIsFavorite] = useState(favorite);
 
@@ -1078,7 +1095,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
       solvedAt: solvedAtIso,
       duration,
       attempts,
-      tags: [...new Set(tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean))],
+      tags,
       note: note.trim(),
     }, isFavorite);
   }
@@ -1098,7 +1115,7 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
             <NumberStepper label="用时" value={duration} unit="分钟" min={1} max={300} step={5} onChange={setDuration} />
             <NumberStepper label="尝试次数" value={attempts} unit="次" min={1} max={20} step={1} onChange={setAttempts} />
           </div></fieldset>
-          <fieldset><legend>标签</legend><input className="standalone-input" placeholder="数组，双指针，动态规划" value={tags} onChange={(event) => setTags(event.target.value)} /><small>使用逗号分隔多个标签</small></fieldset>
+          <fieldset><legend>标签（可多选）</legend><TagPicker value={tags} onChange={setTags} /></fieldset>
           <fieldset><legend>解题笔记</legend><textarea placeholder="记录思路、踩坑点或下次复习重点…" value={note} onChange={(event) => setNote(event.target.value)} rows={5} /></fieldset>
           <label className="favorite-toggle surface"><span>◆ 加入重点收藏</span><input type="checkbox" checked={isFavorite} onChange={(event) => setIsFavorite(event.target.checked)} /></label>
         </div>
@@ -1108,7 +1125,46 @@ function RecordEditor({ request, favorite, onCancel, onSave }: {
 }
 
 function Segmented<T extends string>({ values, value, onChange }: { values: T[]; value: T; onChange: (value: T) => void }) {
-  return <div className="segmented">{values.map((item) => <button type="button" key={item} className={value === item ? "active" : ""} onClick={() => onChange(item)}>{item}</button>)}</div>;
+  return <div className="segmented">{values.map((item) => <button type="button" key={item} className={value === item ? "active" : ""} aria-pressed={value === item} onClick={() => onChange(item)}>{item}</button>)}</div>;
+}
+
+function TagPicker({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+  const [customVisible, setCustomVisible] = useState(false);
+  const [customTag, setCustomTag] = useState("");
+
+  function addTag(tag: string) {
+    const normalized = tag.trim();
+    if (normalized && !value.includes(normalized)) onChange([...value, normalized]);
+  }
+
+  return (
+    <div className="tag-picker surface">
+      <select
+        className="tag-select"
+        aria-label="选择标签"
+        value=""
+        onChange={(event) => {
+          if (event.target.value === CUSTOM_TAG) setCustomVisible(true);
+          else if (event.target.value) addTag(event.target.value);
+        }}
+      >
+        <option value="">选择常用标签…</option>
+        {COMMON_TAGS.filter((tag) => !value.includes(tag)).map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+        <option value={CUSTOM_TAG}>其他 / 自定义…</option>
+      </select>
+      {value.length > 0 && (
+        <div className="tag-chips" aria-label="已选标签">
+          {value.map((tag) => <button type="button" className="tag-chip" key={tag} onClick={() => onChange(value.filter((item) => item !== tag))}>{tag}<span aria-hidden="true">×</span></button>)}
+        </div>
+      )}
+      {customVisible && (
+        <div className="custom-tag-row">
+          <input autoFocus value={customTag} onChange={(event) => setCustomTag(event.target.value)} placeholder="输入自定义标签" />
+          <button type="button" onClick={() => { addTag(customTag); setCustomTag(""); setCustomVisible(false); }} disabled={!customTag.trim()}>添加</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function NumberStepper({ label, value, unit, min, max, step, onChange }: { label: string; value: number; unit: string; min: number; max: number; step: number; onChange: (value: number) => void }) {
