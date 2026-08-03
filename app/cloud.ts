@@ -21,6 +21,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 
 export type CloudUser = User;
 
+export class LeetCodeSyncRequestError extends Error {}
+
 export type CloudStateRow = {
   user_id: string;
   payload: unknown;
@@ -57,25 +59,38 @@ export async function writeCloudState(
 }
 
 export async function readRecentLeetCodeSubmissions(days: LeetCodeSyncDays) {
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 25_000);
   let data: unknown;
-  try {
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/leetcode-recent`, {
-      method: "POST",
-      headers: {
-        "apikey": SUPABASE_PUBLISHABLE_KEY,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ userSlug: LEETCODE_USER_SLUG, days }),
-      signal: controller.signal,
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = await supabase.functions.invoke("leetcode-recent", {
+      body: { userSlug: LEETCODE_USER_SLUG, days },
+      timeout: 25_000,
     });
-    if (!response.ok) throw new Error("LeetCode sync failed");
-    data = await response.json() as unknown;
-  } finally {
-    window.clearTimeout(timeout);
+    if (!result.error) {
+      data = result.data;
+      break;
+    }
+    lastError = result.error;
+    if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 800));
   }
+
+  if (data === undefined) {
+    const errorName = lastError instanceof Error ? lastError.name : "";
+    const context = typeof lastError === "object" && lastError !== null && "context" in lastError
+      ? (lastError as { context?: unknown }).context
+      : undefined;
+    const status = context instanceof Response ? context.status : 0;
+    if (status === 401 || status === 403) {
+      throw new LeetCodeSyncRequestError("同步服务认证失败，请刷新页面后再试。");
+    }
+    if (errorName === "FunctionsFetchError") {
+      throw new LeetCodeSyncRequestError("手机暂时无法连接同步服务，已自动重试；请切换网络后再试。");
+    }
+    throw new LeetCodeSyncRequestError("力扣同步服务暂时不可用，已自动重试；请稍后再点一次。");
+  }
+
   const parsed = parseLeetCodeSyncResponse(data);
-  if (!parsed) throw new Error("Invalid LeetCode sync response");
+  if (!parsed) throw new LeetCodeSyncRequestError("同步服务返回的数据格式异常，请稍后再试。");
   return parsed;
 }

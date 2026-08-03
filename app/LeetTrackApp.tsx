@@ -26,6 +26,7 @@ import {
   type SolveLog,
 } from "./domain";
 import {
+  LeetCodeSyncRequestError,
   readRecentLeetCodeSubmissions,
   readCloudState,
   supabase,
@@ -669,9 +670,11 @@ export function LeetTrackApp() {
       setLastLeetcodeSync(new Date().toISOString());
       setLeetcodeSyncStatus("success");
       setLeetcodeSyncMessage(`${details}。${result.limited && days > 3 ? "力扣公开主页最多提供最近 15 条，较长范围可能不完整。" : ""}`);
-    } catch {
+    } catch (error) {
       setLeetcodeSyncStatus("error");
-      setLeetcodeSyncMessage("暂时无法读取力扣记录，请稍后再点一次同步。");
+      setLeetcodeSyncMessage(error instanceof LeetCodeSyncRequestError
+        ? error.message
+        : "暂时无法读取力扣记录，请稍后再点一次同步。");
     }
   }
 

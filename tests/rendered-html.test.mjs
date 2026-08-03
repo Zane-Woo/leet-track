@@ -59,11 +59,14 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.match(edgeFunction, /recentACSubmissions/);
   assert.match(edgeFunction, /auth: "publishable"/);
   assert.match(cloud, /sync_leet_track_state/);
+  assert.match(cloud, /supabase\.functions\.invoke\("leetcode-recent"/);
+  assert.match(cloud, /attempt < 2/);
+  assert.match(cloud, /timeout: 25_000/);
   assert.match(migration, /enable row level security/i);
   assert.match(migration, /auth\.uid\(\)/);
   assert.match(config, /output:\s*isGitHubPages \? "export"/);
   assert.equal(JSON.parse(manifestRaw).display, "standalone");
   assert.match(worker, /event\.request\.mode === "navigate"/);
   assert.match(worker, /requestUrl\.origin !== self\.location\.origin/);
-  assert.match(worker, /leet-track-v4/);
+  assert.match(worker, /leet-track-v5/);
 });
