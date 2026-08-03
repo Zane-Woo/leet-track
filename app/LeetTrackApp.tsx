@@ -25,10 +25,17 @@ import {
   type Mastery,
   type SolveLog,
 } from "./domain";
+import {
+  readCloudState,
+  supabase,
+  writeCloudState,
+  type CloudUser,
+} from "./cloud";
 
 type Tab = "today" | "library" | "insights" | "settings";
 type Appearance = "system" | "light" | "dark";
 type ProgressFilter = "全部" | "未刷" | "已刷";
+type CloudSyncStatus = "checking" | "signed-out" | "email-sent" | "syncing" | "synced" | "error";
 
 type EditorRequest = { problem: CatalogProblem; log?: SolveLog };
 
@@ -46,8 +53,10 @@ const LEGACY_KEY = "leet-track-problems-v1";
 const GOAL_KEY = "leet-track-weekly-goal";
 const APPEARANCE_KEY = "leet-track-appearance";
 const RECOVERY_KEY = "leet-track-recovery-v1";
+const LOCAL_UPDATED_KEY = "leet-track-local-updated-at-v1";
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const DAY = 86_400_000;
+const NEVER_UPDATED = "1970-01-01T00:00:00.000Z";
 const INVALID_JSON = Symbol("invalid-json");
 const CUSTOM_TAG = "__custom__";
 const COMMON_TAGS = [
@@ -211,6 +220,19 @@ function migrateLegacy(items: LegacyProblem[]) {
   return { logs, favorites: [...favorites], custom };
 }
 
+function normalizeCloudBackup(backup: BackupV2) {
+  const customProblems = backup.customProblems.filter((problem) =>
+    !CATALOG.some((catalogProblem) => catalogProblem.slug === problem.slug),
+  );
+  const knownSlugs = new Set([...CATALOG, ...customProblems].map((problem) => problem.slug));
+  return {
+    ...backup,
+    logs: backup.logs.filter((log) => knownSlugs.has(log.problemSlug)),
+    favoriteSlugs: backup.favoriteSlugs.filter((slug) => knownSlugs.has(slug)),
+    customProblems,
+  } satisfies BackupV2;
+}
+
 export function LeetTrackApp() {
   const [logs, setLogs] = useState<SolveLog[]>([]);
   const [favoriteSlugs, setFavoriteSlugs] = useState<string[]>([]);
@@ -226,7 +248,16 @@ export function LeetTrackApp() {
   const [detailProblem, setDetailProblem] = useState<CatalogProblem>();
   const [pendingUncheck, setPendingUncheck] = useState<CatalogProblem>();
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [cloudUser, setCloudUser] = useState<CloudUser | null>();
+  const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>("checking");
+  const [cloudMessage, setCloudMessage] = useState("正在确认云同步状态…");
+  const [cloudReady, setCloudReady] = useState(false);
+  const [lastCloudSync, setLastCloudSync] = useState("");
+  const [localUpdatedAt, setLocalUpdatedAt] = useState(NEVER_UPDATED);
+  const [syncRequest, setSyncRequest] = useState(0);
   const importRef = useRef<HTMLInputElement>(null);
+  const lastPushedAtRef = useRef("");
+  const localStateRef = useRef({ logs, favoriteSlugs, customProblems, weeklyGoal, localUpdatedAt });
 
   const problems = useMemo(() => [...CATALOG, ...customProblems], [customProblems]);
   const orderedLogs = useMemo(() => sortLogs(logs), [logs]);
@@ -234,6 +265,10 @@ export function LeetTrackApp() {
     () => recoverySnapshots.find((snapshot) => snapshot.logs.length > logs.length),
     [logs.length, recoverySnapshots],
   );
+
+  useEffect(() => {
+    localStateRef.current = { logs, favoriteSlugs, customProblems, weeklyGoal, localUpdatedAt };
+  }, [customProblems, favoriteSlugs, localUpdatedAt, logs, weeklyGoal]);
 
   useEffect(() => {
     let active = true;
@@ -289,6 +324,19 @@ export function LeetTrackApp() {
         setRecoverySnapshots(uniqueRecovery);
         setWeeklyGoal(Number(localStorage.getItem(GOAL_KEY)) || 7);
         setAppearance((localStorage.getItem(APPEARANCE_KEY) as Appearance) || "system");
+        const savedUpdatedAt = localStorage.getItem(LOCAL_UPDATED_KEY);
+        const latestKnownSolve = savedLogs?.reduce(
+          (latest, log) => Math.max(latest, Date.parse(log.solvedAt)),
+          0,
+        ) ?? 0;
+        const migratedLatestSolve = legacy?.reduce(
+          (latest, problem) => Math.max(latest, Date.parse(problem.solvedAt)),
+          0,
+        ) ?? 0;
+        const inferredUpdatedAt = new Date(Math.max(latestKnownSolve, migratedLatestSolve, 0)).toISOString();
+        setLocalUpdatedAt(savedUpdatedAt && Number.isFinite(Date.parse(savedUpdatedAt))
+          ? savedUpdatedAt
+          : inferredUpdatedAt);
       } catch {
         setStorageWritable(false);
         setStorageIssue("读取本机数据时发生异常，题迹已停止写入，避免覆盖原始记录。");
@@ -297,6 +345,141 @@ export function LeetTrackApp() {
     });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+      if (error) {
+        setCloudUser(null);
+        setCloudStatus("error");
+        setCloudMessage("登录状态读取失败，请稍后重试。");
+        return;
+      }
+      setCloudUser(data.session?.user ?? null);
+      setCloudStatus(data.session ? "checking" : "signed-out");
+      setCloudMessage(data.session ? "正在检查云端记录…" : "登录后自动备份到云端，并可跨设备同步。");
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      queueMicrotask(() => {
+        if (!active) return;
+        setCloudUser(session?.user ?? null);
+        setCloudReady(false);
+        setCloudStatus(session ? "checking" : "signed-out");
+        setCloudMessage(session ? "正在检查云端记录…" : "登录后自动备份到云端，并可跨设备同步。");
+      });
+    });
+
+    return () => {
+      active = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || !cloudUser) return;
+    let active = true;
+
+    async function reconcileCloud() {
+      setCloudReady(false);
+      setCloudStatus("checking");
+      setCloudMessage("正在比较本机与云端记录…");
+      try {
+        const userId = cloudUser!.id;
+        const cloudRow = await readCloudState(userId);
+        if (!active) return;
+        const local = localStateRef.current;
+
+        if (!cloudRow) {
+          const initialUpdatedAt = local.localUpdatedAt === NEVER_UPDATED
+            ? new Date().toISOString()
+            : local.localUpdatedAt;
+          if (initialUpdatedAt !== local.localUpdatedAt) setLocalUpdatedAt(initialUpdatedAt);
+          const uploaded = await writeCloudState(
+            userId,
+            makeBackup(local.logs, local.favoriteSlugs, local.customProblems, local.weeklyGoal),
+            initialUpdatedAt,
+          );
+          if (!active) return;
+          lastPushedAtRef.current = uploaded.client_updated_at;
+          setLastCloudSync(uploaded.updated_at);
+          setCloudReady(true);
+          setCloudStatus("synced");
+          setCloudMessage(local.logs.length ? `已把本机 ${local.logs.length} 条记录备份到云端。` : "云同步已开启。");
+          return;
+        }
+
+        const parsedCloud = parseLeetBackup(cloudRow.payload);
+        if (!parsedCloud || parsedCloud.version !== 2) {
+          throw new Error("Invalid cloud payload");
+        }
+
+        let syncedAt = cloudRow.updated_at;
+        if (Date.parse(cloudRow.client_updated_at) > Date.parse(local.localUpdatedAt)) {
+          const cloudBackup = normalizeCloudBackup(parsedCloud);
+          setLogs(cloudBackup.logs);
+          setFavoriteSlugs(cloudBackup.favoriteSlugs);
+          setCustomProblems(cloudBackup.customProblems);
+          setWeeklyGoal(cloudBackup.weeklyGoal);
+          setLocalUpdatedAt(cloudRow.client_updated_at);
+          lastPushedAtRef.current = cloudRow.client_updated_at;
+          setCloudMessage(`已从云端恢复 ${cloudBackup.logs.length} 条记录。`);
+        } else {
+          const uploaded = await writeCloudState(
+            userId,
+            makeBackup(local.logs, local.favoriteSlugs, local.customProblems, local.weeklyGoal),
+            local.localUpdatedAt,
+          );
+          if (!active) return;
+          lastPushedAtRef.current = uploaded.client_updated_at;
+          syncedAt = uploaded.updated_at;
+          setCloudMessage("本机与云端记录已一致。");
+        }
+
+        setLastCloudSync(syncedAt);
+        setCloudReady(true);
+        setCloudStatus("synced");
+      } catch {
+        if (!active) return;
+        setCloudReady(false);
+        setCloudStatus("error");
+        setCloudMessage("云同步暂时不可用，本机记录仍会继续安全保存。");
+      }
+    }
+
+    void reconcileCloud();
+    return () => { active = false; };
+  }, [cloudUser, hydrated, syncRequest]);
+
+  useEffect(() => {
+    if (!hydrated || !cloudUser || !cloudReady || localUpdatedAt === NEVER_UPDATED) return;
+    if (lastPushedAtRef.current === localUpdatedAt) return;
+
+    setCloudStatus("syncing");
+    setCloudMessage("本机已保存，正在同步到云端…");
+    const timer = window.setTimeout(async () => {
+      const local = localStateRef.current;
+      try {
+        const uploaded = await writeCloudState(
+          cloudUser.id,
+          makeBackup(local.logs, local.favoriteSlugs, local.customProblems, local.weeklyGoal),
+          local.localUpdatedAt,
+        );
+        if (uploaded.client_updated_at === localStateRef.current.localUpdatedAt) {
+          lastPushedAtRef.current = uploaded.client_updated_at;
+          setLastCloudSync(uploaded.updated_at);
+          setCloudStatus("synced");
+          setCloudMessage("已同步到云端。");
+        }
+      } catch {
+        setCloudStatus("error");
+        setCloudMessage("云同步失败，本机记录已保存；联网后可点“立即同步”重试。");
+      }
+    }, 800);
+
+    return () => window.clearTimeout(timer);
+  }, [cloudReady, cloudUser, customProblems, favoriteSlugs, hydrated, localUpdatedAt, logs, weeklyGoal]);
 
   useEffect(() => {
     if (!hydrated || !storageWritable) return;
@@ -328,13 +511,14 @@ export function LeetTrackApp() {
       localStorage.setItem(CUSTOM_KEY, JSON.stringify(customProblems));
       localStorage.setItem(GOAL_KEY, String(weeklyGoal));
       localStorage.setItem(APPEARANCE_KEY, appearance);
+      localStorage.setItem(LOCAL_UPDATED_KEY, localUpdatedAt);
     } catch {
       queueMicrotask(() => {
         setStorageWritable(false);
         setStorageIssue("保存失败，题迹已停止继续写入。请先导出备份，并检查浏览器存储空间。");
       });
     }
-  }, [appearance, customProblems, favoriteSlugs, hydrated, logs, storageWritable, weeklyGoal]);
+  }, [appearance, customProblems, favoriteSlugs, hydrated, localUpdatedAt, logs, storageWritable, weeklyGoal]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = appearance;
@@ -376,16 +560,63 @@ export function LeetTrackApp() {
       if (event.key === RECOVERY_KEY) {
         setRecoverySnapshots(parsed === undefined || parsed === INVALID_JSON ? [] : parseRecoverySnapshots(parsed));
       }
+      if (event.key === LOCAL_UPDATED_KEY && event.newValue && Number.isFinite(Date.parse(event.newValue))) {
+        setLocalUpdatedAt(event.newValue);
+      }
     };
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, []);
+
+  function markLocalChange() {
+    const changedAt = new Date().toISOString();
+    setLocalUpdatedAt(changedAt);
+    try {
+      localStorage.setItem(LOCAL_UPDATED_KEY, changedAt);
+    } catch {
+      // The existing persistence guard will surface a storage failure.
+    }
+  }
+
+  async function requestCloudLogin(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    setCloudStatus("checking");
+    setCloudMessage("正在发送登录邮件…");
+    const redirectTo = `${window.location.origin}${BASE_PATH}/`;
+    const { error } = await supabase.auth.signInWithOtp({
+      email: normalizedEmail,
+      options: { emailRedirectTo: redirectTo },
+    });
+    if (error) {
+      setCloudStatus("error");
+      setCloudMessage("登录邮件发送失败，请检查邮箱后重试。");
+      return;
+    }
+    setCloudStatus("email-sent");
+    setCloudMessage("登录链接已发送，请到邮箱里点一下；回来后会自动同步。");
+  }
+
+  async function signOutCloud() {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setCloudStatus("error");
+      setCloudMessage("退出登录失败，请稍后重试。");
+    }
+  }
+
+  function syncCloudNow() {
+    if (!cloudUser) return;
+    setCloudReady(false);
+    setSyncRequest((current) => current + 1);
+  }
 
   function logsFor(slug: string) {
     return orderedLogs.filter((log) => log.problemSlug === slug);
   }
 
   function saveLog(log: SolveLog, favorite: boolean) {
+    markLocalChange();
     setLogs((current) => {
       const exists = current.some((item) => item.id === log.id);
       return exists
@@ -410,6 +641,7 @@ export function LeetTrackApp() {
   }
 
   function confirmUncheck(problem: CatalogProblem) {
+    markLocalChange();
     setLogs((current) => current.filter((log) => log.problemSlug !== problem.slug));
     if (detailProblem?.slug === problem.slug) setDetailProblem(undefined);
     setPendingUncheck(undefined);
@@ -417,11 +649,13 @@ export function LeetTrackApp() {
 
   function deleteLog(log: SolveLog) {
     if (window.confirm("删除这一次刷题记录？")) {
+      markLocalChange();
       setLogs((current) => current.filter((item) => item.id !== log.id));
     }
   }
 
   function toggleFavorite(slug: string) {
+    markLocalChange();
     setFavoriteSlugs((current) =>
       current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug],
     );
@@ -455,6 +689,7 @@ export function LeetTrackApp() {
         );
         const knownSlugs = new Set([...CATALOG, ...custom].map((problem) => problem.slug));
         const validLogs = backup.logs.filter((log) => knownSlugs.has(log.problemSlug));
+        markLocalChange();
         setLogs(validLogs);
         setFavoriteSlugs(backup.favoriteSlugs.filter((slug) => knownSlugs.has(slug)));
         setCustomProblems(custom);
@@ -464,6 +699,7 @@ export function LeetTrackApp() {
       }
       if (backup.version === 1) {
         const migrated = migrateLegacy(backup.problems);
+        markLocalChange();
         setLogs(migrated.logs);
         setFavoriteSlugs(migrated.favorites);
         setCustomProblems(migrated.custom);
@@ -487,6 +723,7 @@ export function LeetTrackApp() {
       window.alert("这份恢复记录与当前题单不匹配，未修改现有数据。");
       return;
     }
+    markLocalChange();
     setLogs(recoveredLogs);
     setFavoriteSlugs(snapshot.favoriteSlugs.filter((slug) => knownSlugs.has(slug)));
     setCustomProblems(custom);
@@ -554,15 +791,26 @@ export function LeetTrackApp() {
             weeklyGoal={weeklyGoal}
             appearance={appearance}
             installPromptAvailable={Boolean(installPrompt)}
-            onGoalChange={setWeeklyGoal}
+            cloudUser={cloudUser}
+            cloudStatus={cloudStatus}
+            cloudMessage={cloudMessage}
+            lastCloudSync={lastCloudSync}
+            onGoalChange={(goal) => {
+              markLocalChange();
+              setWeeklyGoal(goal);
+            }}
             onAppearanceChange={setAppearance}
             onInstall={installApp}
+            onCloudLogin={requestCloudLogin}
+            onCloudSignOut={signOutCloud}
+            onCloudSync={syncCloudNow}
             onExport={exportBackup}
             onImport={() => importRef.current?.click()}
             recoverableCount={bestRecovery?.logs.length ?? 0}
             onRecover={bestRecovery ? () => restoreRecovery(bestRecovery) : undefined}
             onClear={() => {
               if (window.confirm("清空全部刷题记录和收藏？题单仍会保留，这个操作无法撤销。")) {
+                markLocalChange();
                 setLogs([]);
                 setFavoriteSlugs([]);
               }
@@ -943,21 +1191,36 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
   );
 }
 
-function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, recoverableCount, onGoalChange, onAppearanceChange, onInstall, onExport, onImport, onRecover, onClear }: {
+function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, recoverableCount, cloudUser, cloudStatus, cloudMessage, lastCloudSync, onGoalChange, onAppearanceChange, onInstall, onCloudLogin, onCloudSignOut, onCloudSync, onExport, onImport, onRecover, onClear }: {
   logs: SolveLog[];
   solvedCount: number;
   weeklyGoal: number;
   appearance: Appearance;
   installPromptAvailable: boolean;
   recoverableCount: number;
+  cloudUser: CloudUser | null | undefined;
+  cloudStatus: CloudSyncStatus;
+  cloudMessage: string;
+  lastCloudSync: string;
   onGoalChange: (goal: number) => void;
   onAppearanceChange: (appearance: Appearance) => void;
   onInstall: () => void;
+  onCloudLogin: (email: string) => Promise<void>;
+  onCloudSignOut: () => Promise<void>;
+  onCloudSync: () => void;
   onExport: () => void;
   onImport: () => void;
   onRecover?: () => void;
   onClear: () => void;
 }) {
+  const [email, setEmail] = useState("");
+  const cloudBusy = cloudStatus === "checking" || cloudStatus === "syncing";
+  const cloudStatusLabel = cloudStatus === "synced"
+    ? "已同步"
+    : cloudStatus === "syncing" || cloudStatus === "checking"
+      ? "同步中"
+      : cloudStatus === "error" ? "待重试" : cloudStatus === "email-sent" ? "已发邮件" : "未登录";
+
   return (
     <section className="page settings-page">
       <PageHeader title="设置" />
@@ -973,6 +1236,38 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
       <SettingsGroup title="目标">
         <div className="settings-row"><span>每周目标</span><div className="stepper"><button onClick={() => onGoalChange(Math.max(1, weeklyGoal - 1))} aria-label="减少每周目标">−</button><strong>{weeklyGoal} 次</strong><button onClick={() => onGoalChange(Math.min(30, weeklyGoal + 1))} aria-label="增加每周目标">＋</button></div></div>
       </SettingsGroup>
+      <SettingsGroup title="云同步">
+        {cloudUser ? (
+          <>
+            <div className="settings-row cloud-account-row">
+              <span><i className={`cloud-dot ${cloudStatus}`} />云端账户</span>
+              <strong>{cloudUser.email ?? "已登录"}</strong>
+            </div>
+            <div className="cloud-sync-copy" role="status">
+              <strong>{cloudStatusLabel}</strong>
+              <span>{cloudMessage}</span>
+              {lastCloudSync && <small>上次同步：{formatDateTime(lastCloudSync)}</small>}
+            </div>
+            <button className="full-row-button" onClick={onCloudSync} disabled={cloudBusy}>立即同步 <span>↻</span></button>
+            <button className="full-row-button subtle-danger" onClick={() => void onCloudSignOut()}>退出云端账户 <span>›</span></button>
+          </>
+        ) : (
+          <form className="cloud-login" onSubmit={(event) => {
+            event.preventDefault();
+            void onCloudLogin(email);
+          }}>
+            <div className="cloud-sync-copy" role="status">
+              <strong>{cloudStatusLabel}</strong>
+              <span>{cloudMessage}</span>
+            </div>
+            <label>
+              <span className="sr-only">登录邮箱</span>
+              <input type="email" inputMode="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="输入邮箱，接收登录链接" />
+              <button type="submit" disabled={cloudBusy || !email.trim()}>{cloudStatus === "email-sent" ? "重新发送" : "发送链接"}</button>
+            </label>
+          </form>
+        )}
+      </SettingsGroup>
       <SettingsGroup title="外观">
         <div className="appearance-options">{([["system", "跟随系统"], ["light", "浅色"], ["dark", "深色"]] as [Appearance, string][]).map(([value, label]) => <button key={value} className={appearance === value ? "active" : ""} aria-pressed={appearance === value} onClick={() => onAppearanceChange(value)}>{label}</button>)}</div>
       </SettingsGroup>
@@ -983,7 +1278,7 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
         {onRecover && <button className="full-row-button recovery-link" onClick={onRecover}>恢复本机旧记录 <span>{recoverableCount} 条 ›</span></button>}
         <button className="full-row-button danger-link" onClick={onClear} disabled={!logs.length}>清空刷题记录 <span>›</span></button>
       </SettingsGroup>
-      <p className="privacy-note"><strong>数据保存在当前入口</strong><br />换设备、浏览器或清除数据前，请先导出备份。</p>
+      <p className="privacy-note"><strong>{cloudUser ? "本机与云端双重保存" : "本机保存仍然有效"}</strong><br />{cloudUser ? "离线时照常记录，联网后自动同步。" : "登录云同步后可跨设备恢复；也建议定期导出备份。"}</p>
     </section>
   );
 }

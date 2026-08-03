@@ -71,6 +71,7 @@ body {
 button, input, select, textarea { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid color-mix(in srgb, var(--orange) 45%, transparent); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .app-shell { min-height: 100dvh; }
 .page-frame { width: min(100%, 620px); margin: 0 auto; min-height: 100dvh; padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
@@ -199,6 +200,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .full-row-button.recovery-link { color: var(--orange); font-weight: 750; }
 .full-row-button.recovery-link span { color: var(--orange); font-size: 13px; }
 .full-row-button:disabled { opacity: .35; }
+.subtle-danger { color: var(--hard); }
+.cloud-account-row span { display: inline-flex; align-items: center; gap: 8px; }
+.cloud-account-row strong { min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.cloud-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
+.cloud-dot.synced { background: var(--easy); box-shadow: 0 0 0 4px color-mix(in srgb, var(--easy) 12%, transparent); }
+.cloud-dot.syncing, .cloud-dot.checking { background: var(--medium); }
+.cloud-dot.error { background: var(--hard); }
+.cloud-sync-copy { display: grid; gap: 4px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.cloud-sync-copy strong { font-size: 13px; }
+.cloud-sync-copy span, .cloud-sync-copy small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.cloud-login label { display: flex; gap: 8px; padding: 10px; }
+.cloud-login input { min-width: 0; flex: 1; height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); color: var(--ink); font-size: 16px; }
+.cloud-login button { min-width: 88px; min-height: 44px; padding: 0 12px; border: 0; border-radius: 11px; background: var(--ink); color: var(--canvas); font-size: 12px; font-weight: 750; cursor: pointer; }
+.cloud-login button:disabled { opacity: .38; }
 .stepper, .inline-stepper { display: flex; align-items: center; gap: 9px; }
 .stepper button, .inline-stepper button { width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); cursor: pointer; }
 .stepper strong { min-width: 45px; text-align: center; font-size: 12px; }
