@@ -12,6 +12,11 @@ import {
 import catalogJson from "./problemCatalog.json";
 import {
   parseLeetBackup,
+  parseRecoverySnapshots,
+  parseStoredCustomProblems,
+  parseStoredFavoriteSlugs,
+  parseStoredLegacyProblems,
+  parseStoredLogs,
   safeLocalDateToIso,
   type BackupV2,
   type CatalogProblem,
@@ -40,8 +45,10 @@ const CUSTOM_KEY = "leet-track-custom-problems-v2";
 const LEGACY_KEY = "leet-track-problems-v1";
 const GOAL_KEY = "leet-track-weekly-goal";
 const APPEARANCE_KEY = "leet-track-appearance";
+const RECOVERY_KEY = "leet-track-recovery-v1";
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 const DAY = 86_400_000;
+const INVALID_JSON = Symbol("invalid-json");
 
 const difficultyMeta: Record<Difficulty, { className: string; mark: string }> = {
   简单: { className: "easy", mark: "叶" },
@@ -94,6 +101,31 @@ function startOfWeek(date: Date) {
 
 function sortLogs(logs: SolveLog[]) {
   return [...logs].sort((a, b) => +new Date(b.solvedAt) - +new Date(a.solvedAt));
+}
+
+function readStoredJson(raw: string | null): unknown | typeof INVALID_JSON | undefined {
+  if (raw === null) return undefined;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return INVALID_JSON;
+  }
+}
+
+function makeBackup(logs: SolveLog[], favoriteSlugs: string[], customProblems: CatalogProblem[], weeklyGoal: number): BackupV2 {
+  return {
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    listSlug: "7m3kaU3o",
+    weeklyGoal,
+    logs,
+    favoriteSlugs,
+    customProblems,
+  };
+}
+
+function sameLogs(left: SolveLog[], right: SolveLog[]) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function useEscape(onEscape: () => void) {
@@ -169,6 +201,9 @@ export function LeetTrackApp() {
   const [weeklyGoal, setWeeklyGoal] = useState(7);
   const [appearance, setAppearance] = useState<Appearance>("system");
   const [hydrated, setHydrated] = useState(false);
+  const [storageWritable, setStorageWritable] = useState(true);
+  const [storageIssue, setStorageIssue] = useState("");
+  const [recoverySnapshots, setRecoverySnapshots] = useState<BackupV2[]>([]);
   const [tab, setTab] = useState<Tab>("today");
   const [editor, setEditor] = useState<EditorRequest>();
   const [detailProblem, setDetailProblem] = useState<CatalogProblem>();
@@ -178,32 +213,68 @@ export function LeetTrackApp() {
 
   const problems = useMemo(() => [...CATALOG, ...customProblems], [customProblems]);
   const orderedLogs = useMemo(() => sortLogs(logs), [logs]);
+  const bestRecovery = useMemo(
+    () => recoverySnapshots.find((snapshot) => snapshot.logs.length > logs.length),
+    [logs.length, recoverySnapshots],
+  );
 
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
       if (!active) return;
       try {
-        const savedLogs = localStorage.getItem(LOGS_KEY);
-        if (savedLogs) {
-          setLogs(JSON.parse(savedLogs) as SolveLog[]);
-          setFavoriteSlugs(JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? "[]"));
-          setCustomProblems(JSON.parse(localStorage.getItem(CUSTOM_KEY) ?? "[]"));
-        } else {
-          const legacyRaw = localStorage.getItem(LEGACY_KEY);
-          if (legacyRaw) {
-            const migrated = migrateLegacy(JSON.parse(legacyRaw) as LegacyProblem[]);
-            setLogs(migrated.logs);
-            setFavoriteSlugs(migrated.favorites);
-            setCustomProblems(migrated.custom);
+        const savedLogsRaw = localStorage.getItem(LOGS_KEY);
+        const savedLogsJson = readStoredJson(savedLogsRaw);
+        const savedLogs = savedLogsJson === undefined || savedLogsJson === INVALID_JSON
+          ? null
+          : parseStoredLogs(savedLogsJson);
+        const savedFavoritesJson = readStoredJson(localStorage.getItem(FAVORITES_KEY));
+        const savedFavorites = savedFavoritesJson === undefined
+          ? []
+          : savedFavoritesJson === INVALID_JSON ? null : parseStoredFavoriteSlugs(savedFavoritesJson);
+        const savedCustomJson = readStoredJson(localStorage.getItem(CUSTOM_KEY));
+        const savedCustom = savedCustomJson === undefined
+          ? []
+          : savedCustomJson === INVALID_JSON ? null : parseStoredCustomProblems(savedCustomJson);
+        const legacyJson = readStoredJson(localStorage.getItem(LEGACY_KEY));
+        const legacy = legacyJson === undefined || legacyJson === INVALID_JSON
+          ? null
+          : parseStoredLegacyProblems(legacyJson);
+        const storedRecoveryJson = readStoredJson(localStorage.getItem(RECOVERY_KEY));
+        const storedRecovery = storedRecoveryJson === undefined || storedRecoveryJson === INVALID_JSON
+          ? []
+          : parseRecoverySnapshots(storedRecoveryJson);
+
+        if (savedLogsRaw !== null && !savedLogs) {
+          setStorageWritable(false);
+          setStorageIssue("检测到本机记录格式异常，题迹已停止写入，避免覆盖原始数据。");
+        } else if (savedLogs) {
+          setLogs(savedLogs);
+          setFavoriteSlugs(savedFavorites ?? []);
+          setCustomProblems(savedCustom ?? []);
+          if (!savedFavorites || !savedCustom) {
+            setStorageIssue("部分收藏或自定义题数据异常，刷题记录已安全保留。");
           }
+        } else if (legacy) {
+          const migrated = migrateLegacy(legacy);
+          setLogs(migrated.logs);
+          setFavoriteSlugs(migrated.favorites);
+          setCustomProblems(migrated.custom);
         }
+
+        if (legacy && !isBundledDemo(legacy)) {
+          const migrated = migrateLegacy(legacy);
+          storedRecovery.push(makeBackup(migrated.logs, migrated.favorites, migrated.custom, Number(localStorage.getItem(GOAL_KEY)) || 7));
+        }
+        const uniqueRecovery = storedRecovery
+          .filter((snapshot, index, items) => items.findIndex((item) => sameLogs(item.logs, snapshot.logs)) === index)
+          .sort((a, b) => b.logs.length - a.logs.length || +new Date(b.exportedAt) - +new Date(a.exportedAt));
+        setRecoverySnapshots(uniqueRecovery);
         setWeeklyGoal(Number(localStorage.getItem(GOAL_KEY)) || 7);
         setAppearance((localStorage.getItem(APPEARANCE_KEY) as Appearance) || "system");
       } catch {
-        setLogs([]);
-        setFavoriteSlugs([]);
-        setCustomProblems([]);
+        setStorageWritable(false);
+        setStorageIssue("读取本机数据时发生异常，题迹已停止写入，避免覆盖原始记录。");
       }
       setHydrated(true);
     });
@@ -211,13 +282,42 @@ export function LeetTrackApp() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
-    localStorage.setItem(LOGS_KEY, JSON.stringify(logs));
-    localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteSlugs));
-    localStorage.setItem(CUSTOM_KEY, JSON.stringify(customProblems));
-    localStorage.setItem(GOAL_KEY, String(weeklyGoal));
-    localStorage.setItem(APPEARANCE_KEY, appearance);
-  }, [appearance, customProblems, favoriteSlugs, hydrated, logs, weeklyGoal]);
+    if (!hydrated || !storageWritable) return;
+    try {
+      const persistedLogsJson = readStoredJson(localStorage.getItem(LOGS_KEY));
+      const persistedLogs = persistedLogsJson === undefined || persistedLogsJson === INVALID_JSON
+        ? null
+        : parseStoredLogs(persistedLogsJson);
+      if (persistedLogs?.length && !sameLogs(persistedLogs, logs)) {
+        const persistedFavoritesJson = readStoredJson(localStorage.getItem(FAVORITES_KEY));
+        const persistedCustomJson = readStoredJson(localStorage.getItem(CUSTOM_KEY));
+        const snapshot = makeBackup(
+          persistedLogs,
+          persistedFavoritesJson === undefined || persistedFavoritesJson === INVALID_JSON ? [] : parseStoredFavoriteSlugs(persistedFavoritesJson) ?? [],
+          persistedCustomJson === undefined || persistedCustomJson === INVALID_JSON ? [] : parseStoredCustomProblems(persistedCustomJson) ?? [],
+          Number(localStorage.getItem(GOAL_KEY)) || weeklyGoal,
+        );
+        const storedRecoveryJson = readStoredJson(localStorage.getItem(RECOVERY_KEY));
+        const storedRecovery = storedRecoveryJson === undefined || storedRecoveryJson === INVALID_JSON
+          ? []
+          : parseRecoverySnapshots(storedRecoveryJson);
+        const nextRecovery = [snapshot, ...storedRecovery]
+          .filter((item, index, items) => items.findIndex((candidate) => sameLogs(candidate.logs, item.logs)) === index)
+          .slice(0, 5);
+        localStorage.setItem(RECOVERY_KEY, JSON.stringify(nextRecovery));
+      }
+      localStorage.setItem(LOGS_KEY, JSON.stringify(logs));
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(favoriteSlugs));
+      localStorage.setItem(CUSTOM_KEY, JSON.stringify(customProblems));
+      localStorage.setItem(GOAL_KEY, String(weeklyGoal));
+      localStorage.setItem(APPEARANCE_KEY, appearance);
+    } catch {
+      queueMicrotask(() => {
+        setStorageWritable(false);
+        setStorageIssue("保存失败，题迹已停止继续写入。请先导出备份，并检查浏览器存储空间。");
+      });
+    }
+  }, [appearance, customProblems, favoriteSlugs, hydrated, logs, storageWritable, weeklyGoal]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = appearance;
@@ -235,6 +335,33 @@ export function LeetTrackApp() {
     };
     window.addEventListener("beforeinstallprompt", handleInstall);
     return () => window.removeEventListener("beforeinstallprompt", handleInstall);
+  }, []);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      const parsed = readStoredJson(event.newValue);
+      if (event.key === LOGS_KEY) {
+        const nextLogs = parsed === undefined || parsed === INVALID_JSON ? null : parseStoredLogs(parsed);
+        if (nextLogs) setLogs(nextLogs);
+        else if (event.newValue !== null) {
+          setStorageWritable(false);
+          setStorageIssue("另一个页面写入了异常记录，题迹已停止同步以保护当前数据。");
+        }
+      }
+      if (event.key === FAVORITES_KEY) {
+        const nextFavorites = parsed === undefined || parsed === INVALID_JSON ? null : parseStoredFavoriteSlugs(parsed);
+        if (nextFavorites) setFavoriteSlugs(nextFavorites);
+      }
+      if (event.key === CUSTOM_KEY) {
+        const nextCustom = parsed === undefined || parsed === INVALID_JSON ? null : parseStoredCustomProblems(parsed);
+        if (nextCustom) setCustomProblems(nextCustom);
+      }
+      if (event.key === RECOVERY_KEY) {
+        setRecoverySnapshots(parsed === undefined || parsed === INVALID_JSON ? [] : parseRecoverySnapshots(parsed));
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   function logsFor(slug: string) {
@@ -289,15 +416,7 @@ export function LeetTrackApp() {
   }
 
   function exportBackup() {
-    const backup: BackupV2 = {
-      version: 2,
-      exportedAt: new Date().toISOString(),
-      listSlug: "7m3kaU3o",
-      weeklyGoal,
-      logs,
-      favoriteSlugs,
-      customProblems,
-    };
+    const backup = makeBackup(logs, favoriteSlugs, customProblems, weeklyGoal);
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
@@ -341,6 +460,25 @@ export function LeetTrackApp() {
     }
   }
 
+  function restoreRecovery(snapshot: BackupV2) {
+    const custom = snapshot.customProblems.filter((problem) =>
+      !CATALOG.some((catalogProblem) => catalogProblem.slug === problem.slug),
+    );
+    const knownSlugs = new Set([...CATALOG, ...custom].map((problem) => problem.slug));
+    const recoveredLogs = snapshot.logs.filter((log) => knownSlugs.has(log.problemSlug));
+    if (!recoveredLogs.length) {
+      window.alert("这份恢复记录与当前题单不匹配，未修改现有数据。");
+      return;
+    }
+    setLogs(recoveredLogs);
+    setFavoriteSlugs(snapshot.favoriteSlugs.filter((slug) => knownSlugs.has(slug)));
+    setCustomProblems(custom);
+    setWeeklyGoal(snapshot.weeklyGoal);
+    setStorageWritable(true);
+    setStorageIssue("");
+    window.alert(`已找回 ${recoveredLogs.length} 条刷题记录。`);
+  }
+
   async function installApp() {
     if (installPrompt) {
       await installPrompt.prompt();
@@ -348,7 +486,7 @@ export function LeetTrackApp() {
       setInstallPrompt(null);
       return;
     }
-    window.alert("在 iPhone Safari 中：点击底部“分享”按钮，再选择“添加到主屏幕”。");
+    window.alert("在 iPhone Safari 中：点击底部“分享”按钮，再选择“添加到主屏幕”。添加后请固定从同一入口使用；不同浏览器或主屏幕 App 的本地数据可能彼此独立。");
   }
 
   if (!hydrated) {
@@ -363,6 +501,15 @@ export function LeetTrackApp() {
   return (
     <main className="app-shell">
       <div className="page-frame">
+        {logs.length === 0 && bestRecovery && (
+          <DataRecoveryNotice
+            count={bestRecovery.logs.length}
+            onRestore={() => restoreRecovery(bestRecovery)}
+          />
+        )}
+        {storageIssue && !(logs.length === 0 && bestRecovery) && (
+          <div className="storage-warning" role="status"><strong>数据保护已开启</strong><span>{storageIssue}</span></div>
+        )}
         {tab === "today" && (
           <Dashboard
             problems={problems}
@@ -395,6 +542,8 @@ export function LeetTrackApp() {
             onInstall={installApp}
             onExport={exportBackup}
             onImport={() => importRef.current?.click()}
+            recoverableCount={bestRecovery?.logs.length ?? 0}
+            onRecover={bestRecovery ? () => restoreRecovery(bestRecovery) : undefined}
             onClear={() => {
               if (window.confirm("清空全部刷题记录和收藏？题单仍会保留，这个操作无法撤销。")) {
                 setLogs([]);
@@ -777,17 +926,19 @@ function Insights({ problems, logs }: { problems: CatalogProblem[]; logs: SolveL
   );
 }
 
-function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, onGoalChange, onAppearanceChange, onInstall, onExport, onImport, onClear }: {
+function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvailable, recoverableCount, onGoalChange, onAppearanceChange, onInstall, onExport, onImport, onRecover, onClear }: {
   logs: SolveLog[];
   solvedCount: number;
   weeklyGoal: number;
   appearance: Appearance;
   installPromptAvailable: boolean;
+  recoverableCount: number;
   onGoalChange: (goal: number) => void;
   onAppearanceChange: (appearance: Appearance) => void;
   onInstall: () => void;
   onExport: () => void;
   onImport: () => void;
+  onRecover?: () => void;
   onClear: () => void;
 }) {
   return (
@@ -812,10 +963,20 @@ function Settings({ logs, solvedCount, weeklyGoal, appearance, installPromptAvai
         <div className="settings-row"><span>当前进度</span><strong>{solvedCount} 题 / {logs.length} 次</strong></div>
         <button className="full-row-button" onClick={onExport}>导出备份 <span>›</span></button>
         <button className="full-row-button" onClick={onImport}>导入备份 <span>›</span></button>
+        {onRecover && <button className="full-row-button recovery-link" onClick={onRecover}>恢复本机旧记录 <span>{recoverableCount} 条 ›</span></button>}
         <button className="full-row-button danger-link" onClick={onClear} disabled={!logs.length}>清空刷题记录 <span>›</span></button>
       </SettingsGroup>
-      <p className="privacy-note"><strong>数据只属于你</strong><br />题单内置在应用中，刷题记录只保存在当前设备。清除 Safari 网站数据前，请先导出备份。</p>
+      <p className="privacy-note"><strong>数据只属于你</strong><br />记录保存在当前浏览器或主屏幕 App 的独立空间。请固定使用同一入口；换设备、换浏览器或清除网站数据前，请先导出备份。</p>
     </section>
+  );
+}
+
+function DataRecoveryNotice({ count, onRestore }: { count: number; onRestore: () => void }) {
+  return (
+    <aside className="recovery-notice" role="status">
+      <div><strong>发现可恢复的本机记录</strong><span>找到 {count} 条旧记录，恢复前不会覆盖原始数据。</span></div>
+      <button onClick={onRestore}>立即找回</button>
+    </aside>
   );
 }
 

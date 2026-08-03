@@ -37,6 +37,9 @@ test("ships the fixed catalogue, local persistence and safe offline fallback", a
   assert.equal(catalogue.length, 117);
   assert.equal(new Set(catalogue.map((item) => item.slug)).size, 117);
   assert.match(source, /leet-track-logs-v2/);
+  assert.match(source, /leet-track-recovery-v1/);
+  assert.match(source, /storageWritable/);
+  assert.match(source, /发现可恢复的本机记录/);
   assert.match(source, /parseLeetBackup/);
   assert.match(config, /output:\s*isGitHubPages \? "export"/);
   assert.equal(JSON.parse(manifestRaw).display, "standalone");

@@ -120,28 +120,50 @@ function hasUniqueIds(items: Array<{ id: string }>) {
   return new Set(items.map((item) => item.id)).size === items.length;
 }
 
+export function parseStoredLogs(value: unknown): SolveLog[] | null {
+  return Array.isArray(value) && value.every(isSolveLog) && hasUniqueIds(value)
+    ? value
+    : null;
+}
+
+export function parseStoredFavoriteSlugs(value: unknown): string[] | null {
+  return isStringArray(value) ? [...new Set(value)] : null;
+}
+
+export function parseStoredCustomProblems(value: unknown): CatalogProblem[] | null {
+  if (!Array.isArray(value) || !value.every(isCatalogProblem)) return null;
+  const slugs = value.map((problem) => problem.slug);
+  return new Set(slugs).size === slugs.length ? value : null;
+}
+
+export function parseStoredLegacyProblems(value: unknown): LegacyProblem[] | null {
+  return Array.isArray(value) && value.every(isLegacyProblem) && hasUniqueIds(value)
+    ? value
+    : null;
+}
+
+export function parseRecoverySnapshots(value: unknown): BackupV2[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = parseLeetBackup(item);
+    return parsed?.version === 2 ? [parsed] : [];
+  });
+}
+
 export function parseLeetBackup(value: unknown): BackupV2 | BackupV1 | null {
   if (!isRecord(value) || !isFiniteNumber(value.weeklyGoal, 1, 30)) return null;
 
   if (value.version === 2) {
     if (value.listSlug !== "7m3kaU3o"
       || !isIsoDate(value.exportedAt)
-      || !Array.isArray(value.logs)
-      || !value.logs.every(isSolveLog)
-      || !hasUniqueIds(value.logs)
-      || !isStringArray(value.favoriteSlugs)
-      || !Array.isArray(value.customProblems)
-      || !value.customProblems.every(isCatalogProblem)) return null;
-
-    const slugs = value.customProblems.map((problem) => problem.slug);
-    if (new Set(slugs).size !== slugs.length) return null;
+      || !parseStoredLogs(value.logs)
+      || !parseStoredFavoriteSlugs(value.favoriteSlugs)
+      || !parseStoredCustomProblems(value.customProblems)) return null;
     return value as BackupV2;
   }
 
   if (value.version === 1
-    && Array.isArray(value.problems)
-    && value.problems.every(isLegacyProblem)
-    && hasUniqueIds(value.problems)) return value as BackupV1;
+    && parseStoredLegacyProblems(value.problems)) return value as BackupV1;
 
   return null;
 }
